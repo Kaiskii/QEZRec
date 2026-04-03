@@ -105,6 +105,8 @@ class RecordingOverlay:
         self._dismiss = threading.Event()
         self._ready = threading.Event()
         self._start_time: float = 0
+        self._paused_elapsed: float = 0
+        self._pause_start: float | None = None
         self._elapsed_var: tk.StringVar | None = None
         self._dot = None
         self._dot_visible = True
@@ -113,6 +115,8 @@ class RecordingOverlay:
         self._dismiss.clear()
         self._ready.clear()
         self._start_time = time.perf_counter()
+        self._paused_elapsed = 0
+        self._pause_start = None
         _ensure_tk_thread()
         _inc_overlay()
         _root.after(0, lambda: self._create(process_name))
@@ -154,9 +158,24 @@ class RecordingOverlay:
         self._blink_dot()
         self._check_dismiss()
 
+    @property
+    def elapsed(self) -> float:
+        paused = (time.perf_counter() - self._pause_start) if self._pause_start is not None else 0
+        return time.perf_counter() - self._start_time - self._paused_elapsed - paused
+
+    def pause_timer(self):
+        if self._pause_start is None:
+            self._pause_start = time.perf_counter()
+
+    def resume_timer(self):
+        if self._pause_start is not None:
+            self._paused_elapsed += time.perf_counter() - self._pause_start
+            self._pause_start = None
+
     def _update_timer(self):
         if self._top and not self._dismiss.is_set():
-            elapsed = time.perf_counter() - self._start_time
+            paused = (time.perf_counter() - self._pause_start) if self._pause_start is not None else 0
+            elapsed = time.perf_counter() - self._start_time - self._paused_elapsed - paused
             mins = int(elapsed) // 60
             secs = int(elapsed) % 60
             self._elapsed_var.set(f"  {mins:02d}:{secs:02d}")
@@ -164,11 +183,16 @@ class RecordingOverlay:
 
     def _blink_dot(self):
         if self._top and not self._dismiss.is_set():
-            if self._dot_visible:
-                self._dot.itemconfigure(1, fill="#1a1a1a")
-            else:
+            if self._pause_start is not None:
+                # Paused — hold dot solid red
                 self._dot.itemconfigure(1, fill="#e53e3e")
-            self._dot_visible = not self._dot_visible
+                self._dot_visible = True
+            else:
+                if self._dot_visible:
+                    self._dot.itemconfigure(1, fill="#1a1a1a")
+                else:
+                    self._dot.itemconfigure(1, fill="#e53e3e")
+                self._dot_visible = not self._dot_visible
             self._top.after(800, self._blink_dot)
 
     def _check_dismiss(self):

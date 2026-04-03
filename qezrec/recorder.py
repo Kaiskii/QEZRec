@@ -176,6 +176,7 @@ class Recorder:
         self._paused.set()
         if self._audio:
             self._audio.pause()
+        self._overlay.pause_timer()
         log.info("[REC] Paused")
 
     def resume(self):
@@ -185,7 +186,15 @@ class Recorder:
         self._paused.clear()
         if self._audio:
             self._audio.resume()
+        self._overlay.resume_timer()
         log.info("[REC] Resumed")
+
+    def toggle_pause(self):
+        """Toggle between paused and recording."""
+        if self._paused.is_set():
+            self.resume()
+        else:
+            self.pause()
 
     def _encode_loop(self):
         try:
@@ -209,7 +218,7 @@ class Recorder:
             threading.Thread(target=self.cancel, daemon=True).start()
 
     def _stop_recording(self):
-        elapsed = time.perf_counter() - self._start_time
+        elapsed = self._overlay.elapsed
         self._running.clear()
 
         print(f"\r[STOP] Stopping recording... ({elapsed:.1f}s, {self._frame_count} frames)")

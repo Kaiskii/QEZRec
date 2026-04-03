@@ -93,13 +93,14 @@ def main():
     recorder = Recorder(config)
     atexit.register(recorder.cleanup)
 
-    hotkey = HotkeyListener(on_toggle=recorder.toggle, on_cancel=recorder.cancel)
+    hotkey = HotkeyListener(on_toggle=recorder.toggle, on_cancel=recorder.cancel, on_pause=recorder.toggle_pause)
     hotkey.start()
 
     audio_str = " + audio" if config.audio else ""
     print(f"QEZRec ready | {config.fps}fps, {encoder_name}{audio_str}")
     print(f"  Ctrl+Shift+R  Start/stop recording")
     print(f"  Ctrl+Shift+Q  Cancel recording (discard file)")
+    print(f"  Ctrl+Shift+P  Pause/resume recording")
 
     if args.no_tray:
         print(f"  Ctrl+C        Exit")
