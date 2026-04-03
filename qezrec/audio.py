@@ -183,13 +183,19 @@ class AudioCapture:
     def __init__(self):
         self._running = threading.Event()
         self._thread: threading.Thread | None = None
+        self._started = threading.Event()
 
     def start(self, output_path: str, pid: int | None = None):
         self._output_path = output_path
         self._pid = pid
+        self._started.clear()
         self._running.set()
         self._thread = threading.Thread(target=self._record_loop, daemon=True)
         self._thread.start()
+
+    def wait_started(self, timeout: float = 5.0) -> bool:
+        """Block until WASAPI capture has actually started (or timeout)."""
+        return self._started.wait(timeout=timeout)
 
     def _record_loop(self):
         if self._pid:
@@ -263,6 +269,7 @@ class AudioCapture:
         if hr != 0:
             raise OSError(f"IAudioClient::Start: 0x{hr & 0xFFFFFFFF:08X}")
         log.info("[AUDIO] Capture started OK")
+        self._started.set()
 
         # Write WAV as 16-bit PCM (convert from float if needed)
         wf = wave.open(self._output_path, "wb")
@@ -373,6 +380,7 @@ class AudioCapture:
                 input_device_index=loopback_dev["index"],
                 frames_per_buffer=chunk_size,
             )
+            self._started.set()
 
             wf = wave.open(self._output_path, "wb")
             wf.setnchannels(channels)

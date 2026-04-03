@@ -78,6 +78,9 @@ def main():
 
     validate_environment()
 
+    from .overlay import warm_up as warm_up_overlay
+    warm_up_overlay()
+
     encoder_name = detect_encoder(args.encoder)
 
     config = RecordingConfig(

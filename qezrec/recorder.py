@@ -103,6 +103,12 @@ class Recorder:
         self._capture = ScreenCapture(target.title, self._config.fps, on_closed=self._on_window_closed)
         self._capture.start()
 
+        # Kick off audio init in parallel — WASAPI activation takes ~1s.
+        # Starting it now means it'll be ready by the time we have the first video frame.
+        if self._config.audio:
+            self._audio = AudioCapture()
+            self._audio.start(audio_path, pid=window.pid)
+
         # Wait for the first frame to determine dimensions
         self._running.set()
         self._capture.wait_for_first_frame(timeout=5.0)
@@ -112,6 +118,9 @@ class Recorder:
             self._capture.stop()
             self._capture = None
             self._running.clear()
+            if self._audio:
+                self._audio.stop()
+                self._audio = None
             return
 
         first_frame = self._capture.get_frame(timeout=1.0)
@@ -120,6 +129,9 @@ class Recorder:
             self._capture.stop()
             self._capture = None
             self._running.clear()
+            if self._audio:
+                self._audio.stop()
+                self._audio = None
             return
 
         height, width = first_frame.shape[:2]
@@ -138,14 +150,15 @@ class Recorder:
         self._encoder.write_frame(first_frame)
         self._frame_count += 1
 
-        # Start encode thread
+        # Wait for audio to confirm it has actually started before the encode loop begins.
+        # This ensures video and audio are truly in sync from frame 1.
+        if self._audio:
+            if not self._audio.wait_started(timeout=3.0):
+                log.warning("[AUDIO] Did not start within 3s — proceeding without audio sync guarantee")
+
+        # Start encode loop — both video encoder and audio are confirmed running.
         self._encode_thread = threading.Thread(target=self._encode_loop, daemon=True)
         self._encode_thread.start()
-
-        # Start audio if enabled - capture from the target process
-        if self._config.audio:
-            self._audio = AudioCapture()
-            self._audio.start(audio_path, pid=window.pid)
 
         self._start_time = time.perf_counter()
         self._state = State.RECORDING

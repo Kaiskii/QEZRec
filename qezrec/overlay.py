@@ -50,6 +50,11 @@ def any_overlay_visible() -> bool:
         return _active_overlays > 0
 
 
+def warm_up():
+    """Start the Tk thread eagerly at app launch so the first overlay has no init delay."""
+    _ensure_tk_thread()
+
+
 # ---------------------------------------------------------------------------
 # Temporary notification popup
 # ---------------------------------------------------------------------------
