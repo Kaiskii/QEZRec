@@ -13,7 +13,7 @@ from .audio import AudioCapture
 from .capture import ScreenCapture
 from .config import RecordingConfig, detect_encoder
 from .encoder import VideoEncoder, mux_audio_video
-from .overlay import RecordingOverlay, show_overlay
+from .overlay import RecordingOverlay, any_overlay_visible, show_overlay
 from .window import find_windows_by_process, get_foreground_window
 
 log = logging.getLogger(__name__)
@@ -60,6 +60,10 @@ class Recorder:
         threading.Thread(target=self.toggle, daemon=True).start()
 
     def _start_recording(self):
+        if any_overlay_visible():
+            log.info("Overlay still visible — ignoring start request.")
+            return
+
         window = get_foreground_window()
         if window is None:
             log.error("No active window found.")
