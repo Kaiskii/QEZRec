@@ -10,8 +10,8 @@ Quick & Ez Recording Tool. Because Game Bar doesn't always work, and opening OBS
 
 ## Requirements
 
-- Windows
-- Python 3.10+
+- Windows 10 2004+ (Build 19041+)
+- Python 3.10+ (for running from source)
 - [FFmpeg](https://ffmpeg.org/download.html) in PATH (or bundled with the .exe)
 
 ## Install
@@ -32,8 +32,8 @@ python -m qezrec [options]
 
 | Option | Description |
 |---|---|
-| `--audio` | Capture audio from the target application |
-| `--fps 60` | Recording framerate (default: 30) |
+| `--no-audio` | Disable per-process audio capture |
+| `--fps 60` | Recording framerate (default: 60) |
 | `--encoder auto` | Video encoder: `auto`, `h264_nvenc`, `h264_amf`, `libx264` |
 | `--output-dir PATH` | Output directory (default: `~/Videos/QEZRec`) |
 | `--no-tray` | Run in CLI mode without system tray |
