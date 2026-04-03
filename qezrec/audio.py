@@ -184,11 +184,19 @@ class AudioCapture:
         self._running = threading.Event()
         self._thread: threading.Thread | None = None
         self._started = threading.Event()
+        self._paused = threading.Event()
+
+    def pause(self):
+        self._paused.set()
+
+    def resume(self):
+        self._paused.clear()
 
     def start(self, output_path: str, pid: int | None = None):
         self._output_path = output_path
         self._pid = pid
         self._started.clear()
+        self._paused.set()   # hold writes until resume() is called at go time
         self._running.set()
         self._thread = threading.Thread(target=self._record_loop, daemon=True)
         self._thread.start()
@@ -308,26 +316,27 @@ class AudioCapture:
                         break
 
                     if num_frames.value > 0:
-                        if flags_out.value & AUDCLNT_BUFFERFLAGS_SILENT:
-                            wf.writeframes(b"\x00" * (num_frames.value * channels * 2))
-                            total_silent += num_frames.value
-                        elif data_ptr.value:
-                            byte_count = num_frames.value * block_align
-                            raw = (ctypes.c_byte * byte_count).from_address(data_ptr.value)
-                            raw_bytes = bytes(raw)
+                        if not self._paused.is_set():
+                            if flags_out.value & AUDCLNT_BUFFERFLAGS_SILENT:
+                                wf.writeframes(b"\x00" * (num_frames.value * channels * 2))
+                                total_silent += num_frames.value
+                            elif data_ptr.value:
+                                byte_count = num_frames.value * block_align
+                                raw = (ctypes.c_byte * byte_count).from_address(data_ptr.value)
+                                raw_bytes = bytes(raw)
 
-                            if is_float and bits == 32:
-                                # Convert float32 -> int16
-                                n_samples = num_frames.value * channels
-                                floats = struct.unpack(f"<{n_samples}f", raw_bytes)
-                                int16s = struct.pack(f"<{n_samples}h",
-                                    *(max(-32768, min(32767, int(s * 32767))) for s in floats))
-                                wf.writeframes(int16s)
-                            else:
-                                wf.writeframes(raw_bytes)
+                                if is_float and bits == 32:
+                                    # Convert float32 -> int16
+                                    n_samples = num_frames.value * channels
+                                    floats = struct.unpack(f"<{n_samples}f", raw_bytes)
+                                    int16s = struct.pack(f"<{n_samples}h",
+                                        *(max(-32768, min(32767, int(s * 32767))) for s in floats))
+                                    wf.writeframes(int16s)
+                                else:
+                                    wf.writeframes(raw_bytes)
 
-                        total_frames += num_frames.value
-                        total_packets += 1
+                            total_frames += num_frames.value
+                            total_packets += 1
 
                     ReleaseBuffer(cap_ptr, num_frames.value)
 
@@ -390,7 +399,8 @@ class AudioCapture:
             try:
                 while self._running.is_set():
                     data = stream.read(chunk_size, exception_on_overflow=False)
-                    wf.writeframes(data)
+                    if not self._paused.is_set():
+                        wf.writeframes(data)
             finally:
                 wf.close()
                 stream.stop_stream()

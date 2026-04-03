@@ -37,6 +37,7 @@ class Recorder:
 
         self._encode_thread: threading.Thread | None = None
         self._overlay = RecordingOverlay()
+        self._paused = threading.Event()
         self._start_time: float = 0
         self._locked_width: int = 0
         self._locked_height: int = 0
@@ -150,13 +151,16 @@ class Recorder:
         self._encoder.write_frame(first_frame)
         self._frame_count += 1
 
-        # Wait for audio to confirm it has actually started before the encode loop begins.
-        # This ensures video and audio are truly in sync from frame 1.
+        # Wait for audio WASAPI to finish initializing (still paused — no data written yet).
         if self._audio:
             if not self._audio.wait_started(timeout=3.0):
                 log.warning("[AUDIO] Did not start within 3s — proceeding without audio sync guarantee")
 
-        # Start encode loop — both video encoder and audio are confirmed running.
+        # GO: unpause audio then start encode loop back-to-back.
+        # Both streams begin writing within microseconds of each other.
+        if self._audio:
+            self._audio.resume()
+
         self._encode_thread = threading.Thread(target=self._encode_loop, daemon=True)
         self._encode_thread.start()
 
@@ -164,6 +168,24 @@ class Recorder:
         self._state = State.RECORDING
         print(f"\r[REC] Recording {window.process_name} - '{target.title}' | Press Ctrl+Shift+R to stop")
         self._overlay.show(window.process_name.replace(".exe", ""))
+
+    def pause(self):
+        """Pause writing video and audio — both streams stop advancing simultaneously."""
+        if self._state != State.RECORDING:
+            return
+        self._paused.set()
+        if self._audio:
+            self._audio.pause()
+        log.info("[REC] Paused")
+
+    def resume(self):
+        """Resume writing video and audio."""
+        if self._state != State.RECORDING:
+            return
+        self._paused.clear()
+        if self._audio:
+            self._audio.resume()
+        log.info("[REC] Resumed")
 
     def _encode_loop(self):
         try:
@@ -174,6 +196,8 @@ class Recorder:
                 frame = capture.get_frame(timeout=0.1)
                 if frame is None:
                     continue
+                if self._paused.is_set():
+                    continue  # drain queue but don't write to encoder
                 h, w = frame.shape[:2]
                 if w != self._locked_width or h != self._locked_height:
                     frame = cv2.resize(frame, (self._locked_width, self._locked_height), interpolation=cv2.INTER_AREA)
