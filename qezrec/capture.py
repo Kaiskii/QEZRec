@@ -4,7 +4,7 @@ import threading
 import time
 
 import numpy as np
-from windows_capture import WindowsCapture, Frame, InternalCaptureControl
+from windows_capture import WindowsCapture, Frame, InternalCaptureControl, CaptureControl
 
 log = logging.getLogger(__name__)
 
@@ -21,8 +21,8 @@ class ScreenCapture:
         self._frame_interval = 1.0 / fps
         self._running = threading.Event()
         self._frame_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=fps * 4)
-        self._capture_thread: threading.Thread | None = None
         self._fps_thread: threading.Thread | None = None
+        self._capture_control: CaptureControl | None = None
         self._last_frame: np.ndarray | None = None
         self._last_frame_lock = threading.Lock()
         self._frame_count = 0
@@ -32,15 +32,6 @@ class ScreenCapture:
 
     def start(self):
         self._running.set()
-        self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
-        self._capture_thread.start()
-        # FPS thread emits frames at constant rate for audio sync
-        self._fps_thread = threading.Thread(target=self._fps_loop, daemon=True)
-        self._fps_thread.start()
-
-    def _capture_loop(self):
-        """Runs the Windows Graphics Capture API - receives frames via callback."""
-        log.debug(f"[CAPTURE] Creating WindowsCapture for '{self._window_title}'")
 
         try:
             capture = WindowsCapture(
@@ -82,13 +73,11 @@ class ScreenCapture:
             if self._on_closed:
                 self._on_closed()
 
-        log.debug("[CAPTURE] Starting capture.start() (blocking)")
-        try:
-            capture.start()
-        except Exception as e:
-            log.error(f"[CAPTURE] capture.start() error: {e}")
-            self._capture_error = str(e)
-            self._capture_ready.set()
+        log.debug("[CAPTURE] Starting capture (free-threaded)")
+        self._capture_control = capture.start_free_threaded()
+
+        self._fps_thread = threading.Thread(target=self._fps_loop, daemon=True)
+        self._fps_thread.start()
 
     def wait_for_first_frame(self, timeout: float = 5.0) -> bool:
         """Wait until the first frame is captured or an error occurs."""
@@ -136,7 +125,8 @@ class ScreenCapture:
 
     def stop(self):
         self._running.clear()
+        if self._capture_control:
+            self._capture_control.stop()
+            self._capture_control = None
         if self._fps_thread:
             self._fps_thread.join(timeout=3)
-        if self._capture_thread:
-            self._capture_thread.join(timeout=3)

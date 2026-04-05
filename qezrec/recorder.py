@@ -8,6 +8,7 @@ from enum import Enum, auto
 
 import cv2
 import numpy as np
+import win32gui
 
 from .audio import AudioCapture
 from .capture import ScreenCapture
@@ -36,8 +37,12 @@ class Recorder:
         self._audio: AudioCapture | None = None
 
         self._encode_thread: threading.Thread | None = None
+        self._minimize_thread: threading.Thread | None = None
         self._overlay = RecordingOverlay()
         self._paused = threading.Event()
+        self._auto_paused: bool = False
+        self._target_hwnd: int = 0
+        self._target_title: str = ""
         self._start_time: float = 0
         self._locked_width: int = 0
         self._locked_height: int = 0
@@ -55,11 +60,6 @@ class Recorder:
             else:
                 self._stop_recording()
 
-    def _on_window_closed(self):
-        """Called by the capture when the target window is closed."""
-        log.info("Target window closed. Auto-stopping recording.")
-        threading.Thread(target=self.toggle, daemon=True).start()
-
     def _start_recording(self):
         if any_overlay_visible():
             log.info("Overlay still visible — ignoring start request.")
@@ -73,6 +73,8 @@ class Recorder:
         # Find the main window for this process (title may differ from foreground)
         process_windows = find_windows_by_process(window.process_name)
         target = process_windows[0] if process_windows else window
+        self._target_hwnd = target.hwnd
+        self._target_title = target.title
 
         if not target.title:
             log.error("Window has no title - cannot capture.")
@@ -101,7 +103,7 @@ class Recorder:
 
         # Start window capture (captures the window directly by its title)
         log.info(f"Capturing window: '{target.title}' (process: {window.process_name})")
-        self._capture = ScreenCapture(target.title, self._config.fps, on_closed=self._on_window_closed)
+        self._capture = ScreenCapture(target.title, self._config.fps)
         self._capture.start()
 
         # Kick off audio init in parallel — WASAPI activation takes ~1s.
@@ -164,6 +166,10 @@ class Recorder:
         self._encode_thread = threading.Thread(target=self._encode_loop, daemon=True)
         self._encode_thread.start()
 
+        self._auto_paused = False
+        self._minimize_thread = threading.Thread(target=self._minimize_watch_loop, daemon=True)
+        self._minimize_thread.start()
+
         self._start_time = time.perf_counter()
         self._state = State.RECORDING
         print(f"\r[REC] Recording {window.process_name} - '{target.title}' | Press Ctrl+Shift+R to stop")
@@ -196,6 +202,32 @@ class Recorder:
         else:
             self.pause()
 
+    def _minimize_watch_loop(self):
+        while self._running.is_set():
+            time.sleep(0.5)
+            try:
+                if not win32gui.IsWindow(self._target_hwnd):
+                    log.info("[REC] Target window closed — auto-stopping")
+                    threading.Thread(target=self.toggle, daemon=True).start()
+                    return
+                minimized = bool(win32gui.IsIconic(self._target_hwnd))
+            except Exception:
+                continue
+            if minimized and not self._auto_paused and not self._paused.is_set():
+                self._auto_paused = True
+                if self._capture:
+                    self._capture.stop()
+                self.pause()
+                log.info("[REC] Window minimized — auto-paused")
+            elif not minimized and self._auto_paused:
+                new_capture = ScreenCapture(self._target_title, self._config.fps)
+                new_capture.start()
+                new_capture.wait_for_first_frame(timeout=5.0)
+                self._capture = new_capture
+                self._auto_paused = False
+                self.resume()
+                log.info("[REC] Window restored — auto-resumed")
+
     def _encode_loop(self):
         try:
             while self._running.is_set():
@@ -225,9 +257,11 @@ class Recorder:
         self._overlay.dismiss()
         show_overlay(f"Saved  {elapsed:.1f}s", duration=2.0, color="#38a169")
 
-        # Wait for encode thread to exit
+        # Wait for encode and minimize-watch threads to exit
         if self._encode_thread:
             self._encode_thread.join(timeout=3)
+        if self._minimize_thread:
+            self._minimize_thread.join(timeout=2)
 
         # Now safe to tear down capture - no threads are using it
         if self._capture:
@@ -288,6 +322,8 @@ class Recorder:
             # Kill threads
             if self._encode_thread:
                 self._encode_thread.join(timeout=3)
+            if self._minimize_thread:
+                self._minimize_thread.join(timeout=2)
 
             # Tear down capture
             if self._capture:
