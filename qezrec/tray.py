@@ -52,6 +52,8 @@ class TrayApp:
         self._hotkey = hotkey
         self._config = config
         self._icon: Icon | None = None
+        from .settings import load_keybinds
+        self._keybinds = load_keybinds()
 
     def _build_menu(self) -> Menu:
         is_rec = self._recorder.state == State.RECORDING
@@ -69,6 +71,10 @@ class TrayApp:
             MenuItem(
                 "Open Recordings Folder",
                 self._on_open_folder,
+            ),
+            MenuItem(
+                "Set Keybinds",
+                self._on_set_keybinds,
             ),
             Menu.SEPARATOR,
             MenuItem(
@@ -97,6 +103,13 @@ class TrayApp:
         folder = self._config.output_dir
         os.makedirs(folder, exist_ok=True)
         os.startfile(folder)
+
+    def _on_set_keybinds(self, icon=None, item=None):
+        from .keybind_setup import open_keybind_dialog
+        def _on_save(new_binds):
+            self._keybinds = new_binds
+            self._hotkey.restart(new_binds)
+        open_keybind_dialog(self._keybinds, _on_save)
 
     def _on_quit(self, icon=None, item=None):
         self._recorder.cleanup()

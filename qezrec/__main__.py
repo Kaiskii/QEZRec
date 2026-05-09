@@ -15,7 +15,7 @@ except Exception:
 
 from .config import DEFAULT_OUTPUT_DIR, RecordingConfig, detect_encoder, find_ffmpeg
 from .hotkey import HotkeyListener
-from .recorder import Recorder
+from .recorder import Recorder, State
 
 
 def validate_environment():
@@ -51,6 +51,7 @@ def main():
     parser.add_argument("--no-audio", action="store_true", help="Disable audio capture")
     parser.add_argument("--no-tray", action="store_true", help="Run in CLI mode without system tray icon")
     parser.add_argument("--verbose", action="store_true", help="Verbose logging")
+    parser.add_argument("--set-keybinds", action="store_true", help="Interactively configure keybinds and save to ~/.qez")
     args = parser.parse_args()
 
     if args.fps < 1:
@@ -76,6 +77,11 @@ def main():
         ],
     )
 
+    if args.set_keybinds:
+        from .keybind_setup import run_keybind_setup_cli
+        run_keybind_setup_cli()
+        sys.exit(0)
+
     validate_environment()
 
     from .overlay import warm_up as warm_up_overlay
@@ -93,14 +99,24 @@ def main():
     recorder = Recorder(config)
     atexit.register(recorder.cleanup)
 
-    hotkey = HotkeyListener(on_toggle=recorder.toggle, on_cancel=recorder.cancel, on_pause=recorder.toggle_pause)
+    from .settings import load_keybinds
+    from .keybind_setup import combo_to_display
+    keybinds = load_keybinds()
+
+    hotkey = HotkeyListener(
+        on_toggle=recorder.toggle,
+        on_cancel=recorder.cancel,
+        on_pause=recorder.toggle_pause,
+        keybinds=keybinds,
+        is_recording=lambda: recorder.state == State.RECORDING,
+    )
     hotkey.start()
 
     audio_str = " + audio" if config.audio else ""
     print(f"QEZRec ready | {config.fps}fps, {encoder_name}{audio_str}")
-    print(f"  Ctrl+Shift+R  Start/stop recording")
-    print(f"  Ctrl+Shift+Q  Cancel recording (discard file)")
-    print(f"  Ctrl+Shift+P  Pause/resume recording")
+    print(f"  {combo_to_display(*keybinds['toggle']):20s}  Start/stop recording")
+    print(f"  {combo_to_display(*keybinds['cancel']):20s}  Cancel recording (discard file)")
+    print(f"  {combo_to_display(*keybinds['pause']):20s}  Pause/resume recording")
 
     if args.no_tray:
         print(f"  Ctrl+C        Exit")
